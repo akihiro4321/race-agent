@@ -1,12 +1,10 @@
-import {
-  cyclePrompt,
-  goalValidityPrompt,
-  roadmapPrompt
-} from "./prompts.js";
+import { ZodError, type ZodType } from "zod";
+import { cyclePrompt, goalValidityPrompt, roadmapPrompt } from "./prompts.js";
 import {
   goalValiditySchema,
   monthlyCycleSchema,
-  roadmapPolicySchema
+  roadmapPolicySchema,
+  userProfileSchema
 } from "./schemas.js";
 import { checkBasicFeasibility, estimateVdot } from "./mock-domain.js";
 import { chatJson, type OpenRouterConfig } from "./openrouter.js";
@@ -22,6 +20,18 @@ type StepResult<T> = {
   retries: number;
   latencyMs: number;
 };
+
+type CoachPipelineErrorCode = "CONFIG_ERROR" | "MODEL_OUTPUT_INVALID" | "OPENROUTER_ERROR";
+
+export class CoachPipelineError extends Error {
+  constructor(
+    public readonly code: CoachPipelineErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = "CoachPipelineError";
+  }
+}
 
 type RunResult = {
   profileId: string;
@@ -39,13 +49,56 @@ type RunResult = {
   warnings: string[];
 };
 
+function parseStepJson<T>(jsonText: string, schema: ZodType<T>): T {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new CoachPipelineError(
+      "MODEL_OUTPUT_INVALID",
+      `JSON parse に失敗しました: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    return schema.parse(parsed);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      throw new CoachPipelineError(
+        "MODEL_OUTPUT_INVALID",
+        `スキーマ検証に失敗しました: ${error.issues
+          .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+          .join(", ")}`
+      );
+    }
+    throw error;
+  }
+}
+
+function normalizePipelineError(error: unknown): Error {
+  if (error instanceof CoachPipelineError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    if (error.message.startsWith("OpenRouter error:")) {
+      return new CoachPipelineError("OPENROUTER_ERROR", error.message);
+    }
+    return error;
+  }
+
+  return new Error(String(error));
+}
+
 async function executeStep<T>(args: {
   model: string;
   prompt: string;
   parse: (jsonText: string) => T;
   config: OpenRouterConfig;
 }): Promise<StepResult<T>> {
-  const maxAttempts = 2;
+  const maxRetries = 2;
+  const maxAttempts = maxRetries + 1;
   let totalLatency = 0;
   let lastError: unknown;
 
@@ -60,7 +113,7 @@ async function executeStep<T>(args: {
       const data = args.parse(jsonText);
       return { data, retries: attempt - 1, latencyMs: totalLatency };
     } catch (error) {
-      lastError = error;
+      lastError = normalizePipelineError(error);
     }
   }
 
@@ -72,30 +125,27 @@ export async function runCoachPipeline(input: {
   model: string;
   config: OpenRouterConfig;
 }): Promise<RunResult> {
+  userProfileSchema.parse(input.profile);
   const vdot = estimateVdot(input.profile);
 
   const goalStep = await executeStep<GoalValidityResult>({
     model: input.model,
     prompt: goalValidityPrompt(input.profile, vdot),
-    parse: (jsonText) => goalValiditySchema.parse(JSON.parse(jsonText)),
+    parse: (jsonText) => parseStepJson(jsonText, goalValiditySchema),
     config: input.config
   });
 
   const roadmapStep = await executeStep<RoadmapPolicy>({
     model: input.model,
     prompt: roadmapPrompt(input.profile, vdot),
-    parse: (jsonText) => roadmapPolicySchema.parse(JSON.parse(jsonText)),
+    parse: (jsonText) => parseStepJson(jsonText, roadmapPolicySchema),
     config: input.config
   });
 
   const cycleStep = await executeStep<MonthlyCyclePlan>({
     model: input.model,
-    prompt: cyclePrompt(
-      input.profile,
-      JSON.stringify(roadmapStep.data),
-      vdot
-    ),
-    parse: (jsonText) => monthlyCycleSchema.parse(JSON.parse(jsonText)),
+    prompt: cyclePrompt(input.profile, JSON.stringify(roadmapStep.data), vdot),
+    parse: (jsonText) => parseStepJson(jsonText, monthlyCycleSchema),
     config: input.config
   });
 

@@ -32,8 +32,7 @@ export function checkBasicFeasibility(
   let highFocusStreak = 0;
   for (const week of cycle.weeks) {
     const isHighFocus =
-      week.focus.toLowerCase().includes("high") ||
-      week.focus.toLowerCase().includes("interval");
+      week.focus.toLowerCase().includes("high") || week.focus.toLowerCase().includes("interval");
     highFocusStreak = isHighFocus ? highFocusStreak + 1 : 0;
     if (highFocusStreak >= 2) {
       warnings.push({

@@ -60,11 +60,7 @@ ${JSON.stringify(input, null, 2)}
 `.trim();
 }
 
-export function cyclePrompt(
-  input: UserProfileInput,
-  roadmapJson: string,
-  vdot: number
-): string {
+export function cyclePrompt(input: UserProfileInput, roadmapJson: string, vdot: number): string {
   return `
 あなたはトレーニング計画コーチです。必ず厳密なJSONのみを返してください。
 

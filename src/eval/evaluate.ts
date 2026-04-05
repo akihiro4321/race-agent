@@ -68,18 +68,16 @@ function toMarkdownReport(perModel: Record<string, EvaluationSummary>): string {
   ];
   for (const [model, s] of Object.entries(perModel)) {
     lines.push(
-      `| ${model} | ${s.totalRuns} | ${s.succeededRuns} | ${(
-        s.successRate * 100
-      ).toFixed(1)}% | ${s.avgLatencyMs.toFixed(0)} | ${(
-        s.retryUsedRate * 100
-      ).toFixed(1)}% | ${(s.warningRate * 100).toFixed(1)}% |`
+      `| ${model} | ${s.totalRuns} | ${s.succeededRuns} | ${(s.successRate * 100).toFixed(
+        1
+      )}% | ${s.avgLatencyMs.toFixed(0)} | ${(s.retryUsedRate * 100).toFixed(
+        1
+      )}% | ${(s.warningRate * 100).toFixed(1)}% |`
     );
   }
   lines.push("");
   lines.push("## 手動品質レビュー");
-  lines.push(
-    "`reports/manual-quality-template.json` に 1-5 点のスコアとメモを記入してください。"
-  );
+  lines.push("`reports/manual-quality-template.json` に 1-5 点のスコアとメモを記入してください。");
   return lines.join("\n");
 }
 
@@ -132,21 +130,13 @@ export async function runEvaluation(config: EvaluationConfig): Promise<void> {
       memo: ""
     }));
 
-  await writeFile(
-    join(config.outputDir, "runs.json"),
-    JSON.stringify(allRuns, null, 2),
-    "utf-8"
-  );
+  await writeFile(join(config.outputDir, "runs.json"), JSON.stringify(allRuns, null, 2), "utf-8");
   await writeFile(
     join(config.outputDir, "summary.json"),
     JSON.stringify(perModel, null, 2),
     "utf-8"
   );
-  await writeFile(
-    join(config.outputDir, "report.md"),
-    toMarkdownReport(perModel),
-    "utf-8"
-  );
+  await writeFile(join(config.outputDir, "report.md"), toMarkdownReport(perModel), "utf-8");
   await writeFile(
     join(config.outputDir, "manual-quality-template.json"),
     JSON.stringify(manualTemplate, null, 2),
