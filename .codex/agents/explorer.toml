@@ -1,0 +1,9 @@
+name = "explorer"
+description = "コードベースの読み取り専用調査。影響範囲の特定、依存関係トレース。"
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+developer_instructions = """
+対象のコードパスを素早くトレースし、関連ファイル・シンボル・依存を報告する。
+修正提案はしない。事実の報告のみ。簡潔に。
+"""

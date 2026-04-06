@@ -13,6 +13,24 @@ export type OpenRouterConfig = {
   temperature: number;
 };
 
+export class OpenRouterError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number
+  ) {
+    super(message);
+    this.name = "OpenRouterError";
+  }
+
+  get isRetryable(): boolean {
+    if (this.status === undefined) {
+      return false;
+    }
+
+    return this.status === 408 || this.status === 409 || this.status === 429 || this.status >= 500;
+  }
+}
+
 export function loadConfig(): OpenRouterConfig {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -54,31 +72,57 @@ export async function chatJson(params: {
   config: OpenRouterConfig;
 }): Promise<{ text: string; jsonText: string; latencyMs: number }> {
   const started = Date.now();
-  const response = await fetch(`${params.config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${params.config.apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": params.config.referer,
-      "X-Title": params.config.appName
-    },
-    body: JSON.stringify({
-      model: params.model,
-      temperature: params.config.temperature,
-      messages: [{ role: "user", content: params.prompt }],
-      response_format: { type: "json_object" }
-    })
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${params.config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.config.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": params.config.referer,
+        "X-Title": params.config.appName
+      },
+      body: JSON.stringify({
+        model: params.model,
+        temperature: params.config.temperature,
+        messages: [{ role: "user", content: params.prompt }],
+        response_format: { type: "json_object" }
+      })
+    });
+  } catch (error) {
+    throw new OpenRouterError(
+      `OpenRouter request failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenRouter error: ${response.status} ${body}`);
+    throw new OpenRouterError(`OpenRouter error: ${response.status} ${body}`, response.status);
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
+  let payload: { choices?: Array<{ message?: { content?: string } }> };
+
+  try {
+    payload = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+  } catch (error) {
+    throw new OpenRouterError(
+      `OpenRouter response parse failed: ${error instanceof Error ? error.message : String(error)}`,
+      response.status
+    );
+  }
+
   const text = payload.choices?.[0]?.message?.content ?? "";
+
+  if (!text.trim()) {
+    throw new OpenRouterError(
+      "OpenRouter response did not contain message content.",
+      response.status
+    );
+  }
+
   const jsonText = extractJsonBlock(text);
 
   return {

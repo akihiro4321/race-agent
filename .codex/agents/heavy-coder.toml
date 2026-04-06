@@ -1,0 +1,9 @@
+name = "heavy_coder"
+description = "複雑なコーディングタスク専用。大規模リファクタリング、マルチファイル変更、難度の高い実装。"
+model = "gpt-5.3-codex"
+model_reasoning_effort = "medium"
+developer_instructions = """
+複雑なコーディングタスクを正確に実装する。
+マルチファイルにまたがる変更も対応する。
+テストの作成・実行も含めて完結させる。
+"""

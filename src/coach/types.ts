@@ -7,7 +7,14 @@ export type UserLevel = (typeof userLevels)[number];
 export const intensityLevels = ["low", "medium", "high"] as const;
 export type IntensityLevel = (typeof intensityLevels)[number];
 
-export const feasibilityWarningCodes = ["load_risk", "intensity_streak"] as const;
+export const feasibilityWarningCodes = [
+  "load_risk",
+  "intensity_streak",
+  "frequency_spike",
+  "recovery_gap",
+  "strength_mismatch",
+  "focus_mismatch"
+] as const;
 export type FeasibilityWarningCode = (typeof feasibilityWarningCodes)[number];
 
 export const roadmapWeekRange = {

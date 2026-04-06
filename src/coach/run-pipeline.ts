@@ -7,7 +7,7 @@ import {
   userProfileSchema
 } from "./schemas.js";
 import { checkBasicFeasibility, estimateVdot } from "./mock-domain.js";
-import { chatJson, type OpenRouterConfig } from "./openrouter.js";
+import { chatJson, OpenRouterError, type OpenRouterConfig } from "./openrouter.js";
 import type {
   GoalValidityResult,
   MonthlyCyclePlan,
@@ -15,9 +15,13 @@ import type {
   UserProfileInput
 } from "./types.js";
 
+export const coachStepNames = ["goalValidity", "roadmap", "cycle"] as const;
+export type CoachStepName = (typeof coachStepNames)[number];
+
 type StepResult<T> = {
   data: T;
   retries: number;
+  attempts: number;
   latencyMs: number;
 };
 
@@ -26,7 +30,9 @@ type CoachPipelineErrorCode = "CONFIG_ERROR" | "MODEL_OUTPUT_INVALID" | "OPENROU
 export class CoachPipelineError extends Error {
   constructor(
     public readonly code: CoachPipelineErrorCode,
-    message: string
+    message: string,
+    public readonly step?: CoachStepName,
+    public readonly retryable = false
   ) {
     super(message);
     this.name = "CoachPipelineError";
@@ -49,7 +55,7 @@ type RunResult = {
   warnings: string[];
 };
 
-function parseStepJson<T>(jsonText: string, schema: ZodType<T>): T {
+function parseStepJson<T>(jsonText: string, schema: ZodType<T>, step: CoachStepName): T {
   let parsed: unknown;
 
   try {
@@ -57,7 +63,9 @@ function parseStepJson<T>(jsonText: string, schema: ZodType<T>): T {
   } catch (error) {
     throw new CoachPipelineError(
       "MODEL_OUTPUT_INVALID",
-      `JSON parse に失敗しました: ${error instanceof Error ? error.message : String(error)}`
+      `JSON parse に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+      step,
+      true
     );
   }
 
@@ -69,22 +77,29 @@ function parseStepJson<T>(jsonText: string, schema: ZodType<T>): T {
         "MODEL_OUTPUT_INVALID",
         `スキーマ検証に失敗しました: ${error.issues
           .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
-          .join(", ")}`
+          .join(", ")}`,
+        step,
+        true
       );
     }
     throw error;
   }
 }
 
-function normalizePipelineError(error: unknown): Error {
+function normalizePipelineError(error: unknown, step: CoachStepName): Error {
   if (error instanceof CoachPipelineError) {
     return error;
   }
 
+  if (error instanceof OpenRouterError) {
+    return new CoachPipelineError("OPENROUTER_ERROR", error.message, step, error.isRetryable);
+  }
+
+  if (error instanceof Error && error.message.startsWith("OpenRouter error:")) {
+    return new CoachPipelineError("OPENROUTER_ERROR", error.message, step);
+  }
+
   if (error instanceof Error) {
-    if (error.message.startsWith("OpenRouter error:")) {
-      return new CoachPipelineError("OPENROUTER_ERROR", error.message);
-    }
     return error;
   }
 
@@ -92,8 +107,9 @@ function normalizePipelineError(error: unknown): Error {
 }
 
 async function executeStep<T>(args: {
+  step: CoachStepName;
   model: string;
-  prompt: string;
+  buildPrompt: (context: { attempt: number; previousError?: string }) => string;
   parse: (jsonText: string) => T;
   config: OpenRouterConfig;
 }): Promise<StepResult<T>> {
@@ -101,19 +117,32 @@ async function executeStep<T>(args: {
   const maxAttempts = maxRetries + 1;
   let totalLatency = 0;
   let lastError: unknown;
+  let previousErrorMessage: string | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const { jsonText, latencyMs } = await chatJson({
         model: args.model,
-        prompt: args.prompt,
+        prompt: args.buildPrompt({ attempt, previousError: previousErrorMessage }),
         config: args.config
       });
       totalLatency += latencyMs;
       const data = args.parse(jsonText);
-      return { data, retries: attempt - 1, latencyMs: totalLatency };
+      return { data, retries: attempt - 1, attempts: attempt, latencyMs: totalLatency };
     } catch (error) {
-      lastError = normalizePipelineError(error);
+      const normalized = normalizePipelineError(error, args.step);
+      lastError = normalized;
+
+      if (
+        normalized instanceof CoachPipelineError &&
+        normalized.retryable &&
+        attempt < maxAttempts
+      ) {
+        previousErrorMessage = normalized.message;
+        continue;
+      }
+
+      break;
     }
   }
 
@@ -129,27 +158,36 @@ export async function runCoachPipeline(input: {
   const vdot = estimateVdot(input.profile);
 
   const goalStep = await executeStep<GoalValidityResult>({
+    step: "goalValidity",
     model: input.model,
-    prompt: goalValidityPrompt(input.profile, vdot),
-    parse: (jsonText) => parseStepJson(jsonText, goalValiditySchema),
+    buildPrompt: ({ attempt, previousError }) =>
+      goalValidityPrompt(input.profile, vdot, { attempt, previousError }),
+    parse: (jsonText) => parseStepJson(jsonText, goalValiditySchema, "goalValidity"),
     config: input.config
   });
 
   const roadmapStep = await executeStep<RoadmapPolicy>({
+    step: "roadmap",
     model: input.model,
-    prompt: roadmapPrompt(input.profile, vdot),
-    parse: (jsonText) => parseStepJson(jsonText, roadmapPolicySchema),
+    buildPrompt: ({ attempt, previousError }) =>
+      roadmapPrompt(input.profile, vdot, { attempt, previousError }),
+    parse: (jsonText) => parseStepJson(jsonText, roadmapPolicySchema, "roadmap"),
     config: input.config
   });
 
   const cycleStep = await executeStep<MonthlyCyclePlan>({
+    step: "cycle",
     model: input.model,
-    prompt: cyclePrompt(input.profile, JSON.stringify(roadmapStep.data), vdot),
-    parse: (jsonText) => parseStepJson(jsonText, monthlyCycleSchema),
+    buildPrompt: ({ attempt, previousError }) =>
+      cyclePrompt(input.profile, JSON.stringify(roadmapStep.data), vdot, {
+        attempt,
+        previousError
+      }),
+    parse: (jsonText) => parseStepJson(jsonText, monthlyCycleSchema, "cycle"),
     config: input.config
   });
 
-  const warnings = checkBasicFeasibility(roadmapStep.data, cycleStep.data).map(
+  const warnings = checkBasicFeasibility(input.profile, roadmapStep.data, cycleStep.data).map(
     (w) => `${w.code}: ${w.message}`
   );
 
