@@ -9,12 +9,13 @@
 ---
 
 ## ナレッジスキルの自動参照
- 
+
 以下のナレッジスキルはユーザーが呼ぶものではなく、ワークフロースキルが必要に応じて自動的に参照する。
- 
+
 - `$architecture-reference`: アーキテクチャ判断、サービス境界、データオーナー、共有基盤ルール
 - `$coding-standards-*`: 技術スタック別コーディング規約
 - `$testing-guide` / `$testing-guide-*`: テスト方針と技術スタック別ガイド
+
 ---
 
 ## サブエージェント使い分けガイドライン
@@ -23,11 +24,13 @@
 タスクの種類に応じて適切なエージェントへの委譲を検討すること。
 
 ### 利用可能なエージェント
+
 - **explorer**: コードベースの調査・影響範囲特定（gpt-5.4-mini, read-only）
 - **worker**: 軽〜中程度の実装・コード変更（gpt-5.4-mini）
 - **heavy_coder**: 複雑なリファクタリング・マルチファイル変更（gpt-5.3-codex）
 
 ### 委譲ルール
+
 - コード変更を伴う作業で、事前に影響範囲を調べる必要がある場合は
   explorerに調査を委譲してからworkerまたはheavy_coderに実装を指示すること
 - 複雑なロジックの実装や既存コードへの影響が大きい修正はheavy_coderを使うこと
@@ -47,8 +50,9 @@
 cp .env.example .env
 npm install
 npm run typecheck
-npm run eval
 ```
+
+`npm run eval` はユーザーが明示的に評価実行を指定した場合のみ実行する。
 
 ## 実装時の必須チェック
 
@@ -67,11 +71,14 @@ npm run eval
 
 ## テスト方針（最小）
 
-現時点では専用テストランナー未導入のため、以下を最低基準とします。
+現時点では専用テストランナー未導入のため、通常の最低基準は以下とします。
 
 1. `npm run typecheck` が成功する
-2. `npm run eval` が完走し、`reports/runs.json` に有効なJSONが出力される
-3. `reports/manual-quality-template.json` に手動評価（1〜5点）を記録する
+
+ユーザーが評価実行を明示した場合のみ、以下も確認する。
+
+1. `npm run eval` が完走し、`reports/runs.json` に有効なJSONが出力される
+2. 必要に応じて `reports/manual-quality-template.json` に手動評価（1〜5点）を記録する
 
 将来テスト追加時は `src/**/__tests__` または `tests/` に `*.test.ts` で配置します。
 

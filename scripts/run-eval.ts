@@ -1,6 +1,6 @@
 import { runEvaluation } from "../src/eval/evaluate.js";
 
-const models = ["qwen/qwen-3.5-plus", "moonshotai/kimi-k2.5"];
+const models = ["openai/gpt-5.4-mini"];
 const runsPerScenario = 3;
 const outputDir = "reports";
 
